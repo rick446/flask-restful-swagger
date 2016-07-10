@@ -7,6 +7,7 @@ from jsonref import JsonRef
 from flask import request
 from flask_restful import Api
 
+from . import docs
 from .errors import SwaggerError
 from .validators import DefaultValidatingDraft4Validator
 
@@ -19,11 +20,19 @@ class SwaggerApi(Api):
         self._spec_url = kwargs.pop('spec_url', None)
         self._resource_module = kwargs.pop('resource_module', None)
         self.validate_responses = kwargs.pop('validate_responses', True)
-        super(SwaggerApi, self).__init__(*args, **kwargs)
+        self.serve_docs = kwargs.pop('serve_docs', '/_docs')
         with closing(urlopen(self._spec_url)) as fp:
-            spec = yaml.load(fp)
-            self._spec = JsonRef.replace_refs(spec)
+            self.spec = yaml.load(fp)
+            self._spec = JsonRef.replace_refs(self.spec)
         self._process_spec(self._spec)
+        super(SwaggerApi, self).__init__(*args, **kwargs)
+        if self.serve_docs is not None:
+            self.add_resource(
+                docs.Spec,
+                '{}/swagger.yaml'.format(self.serve_docs))
+
+    def init_app(self, app):
+        super(SwaggerApi, self).init_app(app)
 
     def add_resource(self, resource, *urls, **kwargs):
         resource_class_args = tuple(kwargs.pop('resource_class_args', ()))
