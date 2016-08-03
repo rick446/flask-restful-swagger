@@ -4,7 +4,7 @@ from urllib2 import urlopen
 
 import yaml
 from jsonref import JsonRef
-from flask import request
+from flask import request, jsonify
 from flask_restful import Api
 
 from . import docs
@@ -16,29 +16,42 @@ class SwaggerApi(Api):
     TRUTHY = ('true', 't', 'yes', 'y', 'on', '1')
     FALSY = ('false', 'f', 'no', 'n', 'off', '0')
 
-    def __init__(self, *args, **kwargs):
-        self._spec_url = kwargs.pop('spec_url', None)
-        self._resource_module = kwargs.pop('resource_module', None)
-        self.validate_responses = kwargs.pop('validate_responses', True)
-        self.serve_docs = kwargs.pop('serve_docs', '/_docs')
-        with closing(urlopen(self._spec_url)) as fp:
-            self.spec = yaml.load(fp)
-            self._spec = JsonRef.replace_refs(self.spec)
-        self._process_spec(self._spec)
-        super(SwaggerApi, self).__init__(*args, **kwargs)
-        if self.serve_docs is not None:
-            self.add_resource(
-                docs.Spec,
-                '{}/swagger.yaml'.format(self.serve_docs))
-
     def init_app(self, app):
+        self._spec_url = app.config.get(
+            'SWAGGER_SPEC_URL', None)
+        self._resource_module = app.config.get(
+            'SWAGGER_RESOURCE_MODULE', None)
+        self.validate_responses = app.config.get(
+            'SWAGGER_VALIDATE_RESPONSES', True)
+        self.serve_docs = app.config.get(
+            'SWAGGER_SERVE_DOCS', '/_docs')
+        spec_text = self.get_spec_text()
+        self.spec = yaml.load(spec_text)
+        self._spec = JsonRef.replace_refs(self.spec)
+        self._process_spec(self._spec)
+
         super(SwaggerApi, self).init_app(app)
+        app.register_error_handler(SwaggerError, self.handle_invalid_usage)
+        if self.serve_docs:
+            app.extensions['flask-restful-swagger'] = self
+            app.register_blueprint(docs.mod, url_prefix=self.serve_docs)
+
+    def get_spec_text(self):
+        with closing(urlopen(self._spec_url)) as fp:
+            return fp.read()
 
     def add_resource(self, resource, *urls, **kwargs):
         resource_class_args = tuple(kwargs.pop('resource_class_args', ()))
         resource_class_args = (self,) + resource_class_args
         kwargs['resource_class_args'] = resource_class_args
         return super(SwaggerApi, self).add_resource(resource, *urls, **kwargs)
+
+    def handle_invalid_usage(self, error):
+        response = jsonify(dict(
+            errors=error.errors,
+            value=error.value))
+        response.status_code = error.status_code
+        return response
 
     def _process_spec(self, spec):
         # Catalog the resources handling each path
@@ -56,8 +69,11 @@ class SwaggerApi(Api):
         method = request.method.lower()
         resp_spec = self._get_response(resource, method, response.status_code)
         if resp_spec is None:
-            raise SwaggerError('Unknown response code {}'.format(
-                response.status_code))
+            raise SwaggerError(
+                500,
+                json.loads(response.data),
+                'Unknown response code {}'.format(
+                    response.status_code))
         schema_spec = resp_spec.get('schema', None)
         if schema_spec is None:
             return
@@ -133,6 +149,8 @@ class SwaggerApi(Api):
             schema_spec['properties'][p_name] = p_sch = dict(type=p_type)
             if p_format:
                 p_sch['format'] = p_format
+            if 'default' in param:
+                p_sch['default'] = param['default']
 
             try:
                 value = data[p_name]
@@ -161,6 +179,6 @@ class SwaggerApi(Api):
         return res
 
     def _check_body_param(self, param_spec, data):
-        schema = DefaultValidatingDraft4Validator(param_spec['type'])
+        schema = DefaultValidatingDraft4Validator(param_spec['schema'])
         schema.validate(data)
         return data
