@@ -30,16 +30,14 @@ class SwaggerApi(Api):
             '{}_SPEC_URL'.format(self._config_prefix), None)
         self._resource_module = app.config.get(
             '{}_RESOURCE_MODULE'.format(self._config_prefix), None)
-        self.validate_responses = app.config.get(
-            '{}_VALIDATE_RESPONSES'.format(self._config_prefix), True)
+        self.validate_responses = self._asbool(app.config.get(
+            '{}_VALIDATE_RESPONSES'.format(self._config_prefix), True))
         spec_text = self.get_spec_text()
         self.spec = yaml.load(spec_text)
         self._spec = JsonRef.replace_refs(self.spec)
         self._process_spec(self._spec)
 
         super(SwaggerApi, self)._init_app(app)
-        app.register_error_handler(SwaggerError, self.handle_invalid_usage)
-        return
 
     def get_spec_text(self):
         with closing(urlopen(self._spec_url)) as fp:
@@ -57,6 +55,11 @@ class SwaggerApi(Api):
             value=error.value))
         response.status_code = error.status_code
         return response
+
+    def handle_error(self, e):
+        if isinstance(e, SwaggerError):
+            return self.handle_invalid_usage(e)
+        return super(SwaggerApi, self).handle_error(e)
 
     def _process_spec(self, spec):
         # Catalog the resources handling each path
@@ -174,10 +177,7 @@ class SwaggerApi(Api):
                 except:
                     pass
             elif p_type == 'boolean':
-                if value.lower() in self.TRUTHY:
-                    res[p_name] = True
-                elif value.lower() in self.FALSY:
-                    res[p_name] = False
+                res[p_name] = self._asbool(value)
             elif p_type == 'string':
                 res[p_name] = unicode(res[p_name])
 
@@ -189,3 +189,13 @@ class SwaggerApi(Api):
         schema = DefaultValidatingDraft4Validator(param_spec['schema'])
         schema.validate(data)
         return data
+
+    def _asbool(self, value):
+        if not isinstance(value, basestring):
+            return value
+        if value.lower() in self.TRUTHY:
+            return True
+        elif value.lower() in self.FALSY:
+            return False
+        else:
+            return value
