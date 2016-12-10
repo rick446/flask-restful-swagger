@@ -3,6 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name='frs',
     # version='0.0.0',
+    # version='0.0.1',
     version_format='{tag}.dev{commitcount}',
     setup_requires=['setuptools-git-version'],
     description='Flask-RESTful Swagger(-driven) Validation',
