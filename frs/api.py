@@ -7,7 +7,6 @@ from jsonref import JsonRef
 from flask import request, jsonify
 from flask_restful import Api
 
-from . import docs
 from .errors import SwaggerError
 from .validators import DefaultValidatingDraft4Validator
 
@@ -16,25 +15,31 @@ class SwaggerApi(Api):
     TRUTHY = ('true', 't', 'yes', 'y', 'on', '1')
     FALSY = ('false', 'f', 'no', 'n', 'off', '0')
 
-    def init_app(self, app):
+    def __init__(self, *args, **kwargs):
+        self._config_prefix = kwargs.pop(
+            'config_prefix', 'FRS')
+        super(SwaggerApi, self).__init__(*args, **kwargs)
+
+    def init_app(self, app, *args, **kwargs):
+        self._config_prefix = kwargs.pop(
+            'config_prefix', self._config_prefix)
+        super(SwaggerApi, self).init_app(app, *args, **kwargs)
+
+    def _init_app(self, app):
         self._spec_url = app.config.get(
-            'SWAGGER_SPEC_URL', None)
+            '{}_SPEC_URL'.format(self._config_prefix), None)
         self._resource_module = app.config.get(
-            'SWAGGER_RESOURCE_MODULE', None)
+            '{}_RESOURCE_MODULE'.format(self._config_prefix), None)
         self.validate_responses = app.config.get(
-            'SWAGGER_VALIDATE_RESPONSES', True)
-        self.serve_docs = app.config.get(
-            'SWAGGER_SERVE_DOCS', '/_docs')
+            '{}_VALIDATE_RESPONSES'.format(self._config_prefix), True)
         spec_text = self.get_spec_text()
         self.spec = yaml.load(spec_text)
         self._spec = JsonRef.replace_refs(self.spec)
         self._process_spec(self._spec)
 
-        super(SwaggerApi, self).init_app(app)
+        super(SwaggerApi, self)._init_app(app)
         app.register_error_handler(SwaggerError, self.handle_invalid_usage)
-        if self.serve_docs:
-            app.extensions['flask-restful-swagger'] = self
-            app.register_blueprint(docs.mod, url_prefix=self.serve_docs)
+        return
 
     def get_spec_text(self):
         with closing(urlopen(self._spec_url)) as fp:
