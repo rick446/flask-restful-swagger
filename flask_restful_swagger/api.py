@@ -173,6 +173,8 @@ class SwaggerApi(Api):
                     res[p_name] = True
                 elif value.lower() in self.FALSY:
                     res[p_name] = False
+            elif p_type == 'string':
+                res[p_name] = unicode(res[p_name])
 
         schema = DefaultValidatingDraft4Validator(schema_spec)
         schema.validate(res)
