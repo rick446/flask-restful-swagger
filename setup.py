@@ -1,10 +1,10 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='flask-restful-swagger',
+    name='frs',
     # version='0.0.0',
     version_format='{tag}.dev{commitcount}',
-    description='Flask-RESTful Swagger Validation',
+    description='Flask-RESTful Swagger(-driven) Validation',
     long_description='',
     classifiers=[
         "Programming Language :: Python",
