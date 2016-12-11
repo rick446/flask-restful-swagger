@@ -1,5 +1,5 @@
 import json
-from contextlib import closing
+from contextlib import closing, contextmanager
 from urllib2 import urlopen
 
 import yaml
@@ -42,6 +42,10 @@ class SwaggerApi(Api):
     def get_spec_text(self):
         with closing(urlopen(self._spec_url)) as fp:
             return fp.read()
+
+    @contextmanager
+    def path(self, path):
+        yield _PathContext(self, path)
 
     def add_resource(self, resource, *urls, **kwargs):
         resource_class_args = tuple(kwargs.pop('resource_class_args', ()))
@@ -199,3 +203,15 @@ class SwaggerApi(Api):
             return False
         else:
             return value
+
+
+class _PathContext(object):
+
+    def __init__(self, api, path):
+        self._api, self._path = api, path
+
+    def add_resource(self, resource, *urls, **kwargs):
+        if not urls:
+            urls = ['']
+        urls = [(self._path + u) for u in urls]
+        return self._api.add_resource(resource, *urls, **kwargs)
