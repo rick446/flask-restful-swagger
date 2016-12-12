@@ -1,4 +1,5 @@
 import json
+import logging
 from contextlib import closing, contextmanager
 from urllib2 import urlopen
 
@@ -9,6 +10,9 @@ from flask_restful import Api
 
 from .errors import SwaggerError
 from .validators import DefaultValidatingDraft4Validator
+
+
+log = logging.getLogger(__name__)
 
 
 class SwaggerApi(Api):
@@ -102,9 +106,20 @@ class SwaggerApi(Api):
         # Check the body param
         body_param_spec = [p for p in params_spec if p['in'] == 'body']
         if body_param_spec:
-            data = request.json
-            if data is None:
+            if request.content_type == 'application/json':
+                try:
+                    data = request.json
+                except Exception as err:
+                    log.warning(
+                        "Client said it sent JSON, but it didn't: %r",
+                        request.data)
+                    data = None
+            elif request.content_type in (
+                    'application/x-www-form-urlencoded',
+                    'multipart/form-data'):
                 data = request.form
+            if data is None:
+                data = request.data
             params['body'] = self._check_body_param(
                 body_param_spec[0], data)
 
