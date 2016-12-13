@@ -15,6 +15,8 @@ def make_blueprint(api):
 
     @bp.route('/swagger.yaml')
     def get_swagger():
-        return Response(api.get_spec_text())
+        return Response(
+            api.get_spec_text(),
+            mimetype='text/x-yaml')
 
     return bp
