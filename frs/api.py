@@ -1,8 +1,9 @@
 import json
 import logging
 from contextlib import closing, contextmanager
-from urllib2 import urlopen
+from six.moves.urllib.request import urlopen
 
+import six
 import yaml
 from jsonref import JsonRef
 from flask import request, jsonify
@@ -118,6 +119,8 @@ class SwaggerApi(Api):
                     'application/x-www-form-urlencoded',
                     'multipart/form-data'):
                 data = request.form
+            else:
+                data = None
             if data is None:
                 data = request.data
             params['body'] = self._check_body_param(
@@ -198,7 +201,7 @@ class SwaggerApi(Api):
             elif p_type == 'boolean':
                 res[p_name] = self._asbool(value)
             elif p_type == 'string':
-                res[p_name] = unicode(res[p_name])
+                res[p_name] = unicode(value)
 
         schema = DefaultValidatingDraft4Validator(schema_spec)
         schema.validate(res)
@@ -210,7 +213,7 @@ class SwaggerApi(Api):
         return data
 
     def _asbool(self, value):
-        if not isinstance(value, basestring):
+        if not isinstance(value, six.string_types):
             return value
         if value.lower() in self.TRUTHY:
             return True
