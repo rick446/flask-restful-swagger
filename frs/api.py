@@ -201,7 +201,7 @@ class SwaggerApi(Api):
             elif p_type == 'boolean':
                 res[p_name] = self._asbool(value)
             elif p_type == 'string':
-                res[p_name] = unicode(value)
+                res[p_name] = six.text_type(value)
 
         schema = DefaultValidatingDraft4Validator(schema_spec)
         schema.validate(res)
