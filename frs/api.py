@@ -228,6 +228,10 @@ class _PathContext(object):
     def __init__(self, api, path):
         self._api, self._path = api, path
 
+    @contextmanager
+    def path(self, path):
+        yield _PathContext(self._api, self._path + path)
+
     def add_resource(self, resource, *urls, **kwargs):
         if not urls:
             urls = ['']
