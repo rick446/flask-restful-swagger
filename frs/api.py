@@ -41,6 +41,7 @@ class SwaggerApi(Api):
         self.spec = yaml.load(spec_text)
         self._spec = JsonRef.replace_refs(self.spec)
         self._process_spec(self._spec)
+        app.extensions['frs'] = self
 
         super(SwaggerApi, self)._init_app(app)
 
