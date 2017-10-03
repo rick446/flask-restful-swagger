@@ -122,10 +122,9 @@ class SwaggerApi(Api):
                 data = request.form
             else:
                 data = None
-            if data is None:
-                data = request.data
-            params['body'] = self._check_body_param(
-                body_param_spec[0], data)
+            if data is not None:
+                params['body'] = self._check_body_param(
+                    body_param_spec[0], data)
 
         # Check the primitive params
         params.update(self._check_primitive_params(
