@@ -1,14 +1,14 @@
 import json
+import yaml
 import logging
-from contextlib import closing, contextmanager
-from six.moves.urllib.request import urlopen
+from contextlib import contextmanager
 
 import six
-import yaml
 from jsonref import JsonRef
 from flask import request, jsonify
 from flask_restful import Api
 
+from .loader import YamlLoader, YamlSafeDumper
 from .errors import SwaggerError
 from .validators import DefaultValidatingDraft4Validator
 
@@ -23,6 +23,7 @@ class SwaggerApi(Api):
     def __init__(self, *args, **kwargs):
         self._config_prefix = kwargs.pop(
             'config_prefix', 'FRS')
+        self._loader = YamlLoader()
         super(SwaggerApi, self).__init__(*args, **kwargs)
 
     def init_app(self, app, *args, **kwargs):
@@ -37,17 +38,19 @@ class SwaggerApi(Api):
             '{}_RESOURCE_MODULE'.format(self._config_prefix), None)
         self.validate_responses = self._asbool(app.config.get(
             '{}_VALIDATE_RESPONSES'.format(self._config_prefix), True))
-        spec_text = self.get_spec_text()
-        self.spec = yaml.load(spec_text)
-        self._spec = JsonRef.replace_refs(self.spec)
+        self.spec = self._loader.get_remote_json(self._spec_url)
+        self._spec = JsonRef.replace_refs(
+            self.spec, base_uri=self._spec_url, loader=self._loader)
         self._process_spec(self._spec)
         app.extensions['frs'] = self
 
         super(SwaggerApi, self)._init_app(app)
 
-    def get_spec_text(self):
-        with closing(urlopen(self._spec_url)) as fp:
-            return fp.read()
+    def get_spec_json(self):
+        return json.dumps(self._spec, default=dict, indent=4)
+
+    def get_spec_yaml(self):
+        return yaml.dump(self._spec, Dumper=YamlSafeDumper)
 
     @contextmanager
     def path(self, path):
