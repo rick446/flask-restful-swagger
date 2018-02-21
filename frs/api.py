@@ -1,3 +1,4 @@
+import cgi
 import json
 import yaml
 import logging
@@ -111,7 +112,8 @@ class SwaggerApi(Api):
         # Check the body param
         body_param_spec = [p for p in params_spec if p['in'] == 'body']
         if body_param_spec:
-            if request.content_type == 'application/json':
+            content_type = cgi.parse_header(request.content_type)[0]
+            if content_type == 'application/json':
                 try:
                     data = request.json
                 except Exception as err:
