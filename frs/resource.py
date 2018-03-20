@@ -13,27 +13,27 @@ from .errors import SwaggerError
 class SwaggerResource(Resource):
 
     def __init__(self, api, *args, **kwargs):
-        self._api = api
-        super(SwaggerResource, self).__init__(*args, **kwargs)
+        self.api = api
+        super().__init__(*args, **kwargs)
 
-    def _resource_name(self):
-        cls = self.__class__
+    @classmethod
+    def resource_name(cls):
         mod = inspect.getmodule(cls)
-        return '{}:{}'.format(mod.__name__, cls.__name__)
+        return f'{mod.__name__}:{cls.__name__}'
 
     def dispatch_request(self, *args, **kwargs):
         with self.checking(400):
-            request.swagger_params = self._api._validate_parameters(
-                self, args, kwargs)
+            request.swagger_params = self.api.validate_parameters(
+                self, request, args, kwargs)
 
-        resp = super(SwaggerResource, self).dispatch_request(*args, **kwargs)
-        if not isinstance(resp, ResponseBase):
-            return resp
-        if resp.content_type != 'application/json':
-            return resp
+        response = super().dispatch_request(*args, **kwargs)
+        if not isinstance(response, ResponseBase):
+            return response
+        if response.content_type != 'application/json':
+            return response
         with self.checking(500):
-            self._api._validate_response(self, resp)
-        return resp
+            self.api.validate_response(self, request, response)
+        return response
 
     @contextmanager
     def checking(self, code):
@@ -43,4 +43,3 @@ class SwaggerResource(Resource):
             raise
         except (SchemaError, ValidationError) as err:
             raise SwaggerError.from_jsonschema_error(code, err)
-

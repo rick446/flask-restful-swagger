@@ -2,14 +2,13 @@ import cgi
 import json
 import yaml
 import logging
-from contextlib import contextmanager
+import importlib
 
 import six
-from jsonref import JsonRef
-from flask import request, jsonify
+from flask import jsonify
 from flask_restful import Api
 
-from .loader import YamlLoader, YamlSafeDumper
+from .loader import YamlSafeDumper
 from .errors import SwaggerError
 from .validators import DefaultValidatingDraft4Validator
 
@@ -17,43 +16,32 @@ from .validators import DefaultValidatingDraft4Validator
 log = logging.getLogger(__name__)
 
 
-def mount_api(spec_url):
-    pass
+def flask_from_swagger(path):
+    return path.replace('{', '<').replace('}', '>')
+
+
+def swagger_from_flask(path):
+    return path.replace('<', '{').replace('>', '}')
 
 
 class SwaggerApi(Api):
     TRUTHY = ('true', 't', 'yes', 'y', 'on', '1')
     FALSY = ('false', 'f', 'no', 'n', 'off', '0')
 
-    def __init__(self, *args, **kwargs):
-        self._config_prefix = kwargs.pop(
-            'config_prefix', 'FRS')
-        self._loader = YamlLoader()
-        self._spec_url = None
-        self._resource_module = None
-        self.validate_responses = None
+    def __init__(self, spec, *args, **kwargs):
         self._resource_paths = {}
-        self._spec = {}
-        super(SwaggerApi, self).__init__(*args, **kwargs)
-
-    def init_app(self, app, *args, **kwargs):
-        self._config_prefix = kwargs.pop(
-            'config_prefix', self._config_prefix)
-        super(SwaggerApi, self).init_app(app, *args, **kwargs)
+        self._spec = spec
+        self._resource_map = {}
+        super().__init__(*args, **kwargs)
 
     def _init_app(self, app):
-        self._spec_url = app.config.get(
-            '{}_SPEC_URL'.format(self._config_prefix), None)
-        self._resource_module = app.config.get(
-            '{}_RESOURCE_MODULE'.format(self._config_prefix), None)
-        self.validate_responses = self._asbool(app.config.get(
-            '{}_VALIDATE_RESPONSES'.format(self._config_prefix), True))
-        spec = self._loader.get_remote_json(self._spec_url)
-        spec = JsonRef.replace_refs(
-            spec, base_uri=self._spec_url, loader=self._loader)
-        self._process_spec(spec)
-        self._spec = spec
-
+        for path, pspec in self._spec['paths'].items():
+            resource_path = pspec.get('x-resource')
+            if resource_path is None:
+                log.debug('Ignoring un-resourced path %s', path)
+                continue
+            resource_class = self._load_resource(resource_path)
+            self.add_resource(resource_class, path)
         super(SwaggerApi, self)._init_app(app)
 
     def get_spec_json(self):
@@ -62,58 +50,25 @@ class SwaggerApi(Api):
     def get_spec_yaml(self):
         return yaml.dump(self._spec, Dumper=YamlSafeDumper)
 
-    @contextmanager
-    def path(self, path):
-        yield _PathContext(self, path)
+    @property
+    def basePath(self):
+        return self._spec.get('basePath', '')
 
-    def add_resource(self, resource, *urls, **kwargs):
-        resource_class_args = tuple(kwargs.pop('resource_class_args', ()))
-        resource_class_args = (self,) + resource_class_args
-        kwargs['resource_class_args'] = resource_class_args
-        return super(SwaggerApi, self).add_resource(resource, *urls, **kwargs)
+    @property
+    def resource_base(self):
+        return self._spec.get('x-resource-base', None)
 
-    def handle_invalid_usage(self, error):
-        response = jsonify(dict(
-            errors=error.errors,
-            value=error.value))
-        response.status_code = error.status_code
-        return response
+    @property
+    def validate_responses(self):
+        return self._spec.get('x-validate-responses', False)
 
-    def handle_error(self, e):
-        if isinstance(e, SwaggerError):
-            return self.handle_invalid_usage(e)
-        return super(SwaggerApi, self).handle_error(e)
+    @property
+    def extra_config(self):
+        return self._spec.get('x-extra', {})
 
-    def _process_spec(self, spec):
-        # Catalog the resources handling each path
-        if self._resource_module:
-            prefix = self._resource_module
-        for path, pspec in spec['paths'].items():
-            res = pspec.get('x-resource')
-            if res:
-                self._resource_paths[prefix + res] = pspec
-
-    def _validate_response(self, resource, response):
-        if not self.validate_responses:
-            return
-        method = request.method.lower()
-        resp_spec = self._get_response(resource, method, response.status_code)
-        if resp_spec is None:
-            raise SwaggerError(
-                500,
-                json.loads(response.data),
-                'Unknown response code {}'.format(
-                    response.status_code))
-        schema_spec = resp_spec.get('schema', None)
-        if schema_spec is None:
-            return
-        schema = DefaultValidatingDraft4Validator(schema_spec)
-        json_data = json.loads(response.data)
-        schema.validate(json_data)
-
-    def _validate_parameters(self, resource, args, kwargs):
-        method = request.method.lower()
-        params_spec = self._get_params(resource, method)
+    def validate_parameters(self, resource, request, args, kwargs):
+        pathspec = self._get_pathspec(resource)
+        params_spec = self._get_params(pathspec, request.method.lower())
 
         params = {}
 
@@ -150,15 +105,66 @@ class SwaggerApi(Api):
             params_spec, 'form', request.form))
         return params
 
-    def _get_params(self, resource, method):
-        pspec = self._resource_paths.get(resource._resource_name(), {})
-        ospec = pspec.get(method, {})
-        params = pspec.get('parameters', []) + ospec.get('parameters', [])
+    def validate_response(self, resource, request, response):
+        if not self._spec.get('x-validate-responses', False):
+            return
+        method = request.method.lower()
+        pathspec = self._get_pathspec(resource)
+
+        resp_spec = self._get_response(pathspec, method, response.status_code)
+        if resp_spec is None:
+            raise SwaggerError(
+                500,
+                json.loads(response.data),
+                'Unknown response code {}'.format(
+                    response.status_code))
+        schema_spec = resp_spec.get('schema', None)
+        if schema_spec is None:
+            return
+        schema = DefaultValidatingDraft4Validator(schema_spec)
+        json_data = json.loads(response.data)
+        schema.validate(json_data)
+
+    def add_resource(self, resource, *swagger_paths, **kwargs):
+        pathspec = self._spec['paths'][swagger_paths[0]]
+        self._resource_map[resource.resource_name()] = pathspec
+        swagger_paths = [
+            self._spec.get('basePath', '') + u for u in swagger_paths]
+        urls = [flask_from_swagger(path) for path in swagger_paths]
+        log.debug('Mount %r at %r', resource, urls)
+        resource_class_args = tuple(kwargs.pop('resource_class_args', ()))
+        resource_class_args = (self,) + resource_class_args
+        return super().add_resource(
+            resource, *urls, resource_class_args=resource_class_args, **kwargs)
+
+    def handle_invalid_usage(self, error):
+        response = jsonify(dict(
+            errors=error.errors,
+            value=error.value))
+        response.status_code = error.status_code
+        return response
+
+    def handle_error(self, e):
+        if isinstance(e, SwaggerError):
+            return self.handle_invalid_usage(e)
+        return super(SwaggerApi, self).handle_error(e)
+
+    def _load_resource(self, resource_module_path):
+        full_path = self._spec['x-resource-base'] + resource_module_path
+        modname, classname = full_path.split(':')
+        mod = importlib.import_module(modname)
+        return getattr(mod, classname)
+
+    def _get_pathspec(self, resource):
+        return self._resource_map[resource.resource_name()]
+
+    def _get_params(self, pathspec, method):
+        ospec = pathspec.get(method, {})
+        params = pathspec.get('parameters', []) + ospec.get('parameters', [])
         return params
 
-    def _get_response(self, resource, method, status_code):
-        pspec = self._resource_paths.get(resource._resource_name(), {})
-        ospec = pspec.get(method, {})
+    def _get_response(self, pathspec, method, status_code):
+        ospec = pathspec.get(method, {})
         responses = ospec.get('responses', {})
         return responses.get(str(status_code), None)
 
@@ -234,28 +240,3 @@ class SwaggerApi(Api):
             return False
         else:
             return value
-
-
-def _deepmerge(dst, src):
-    for k, v in src.items():
-        if isinstance(v, dict):
-            node = dst.setdefault(k, {})
-            _deepmerge(node, v)
-        else:
-            dst[k] = v
-
-
-class _PathContext(object):
-
-    def __init__(self, api, path):
-        self._api, self._path = api, path
-
-    @contextmanager
-    def path(self, path):
-        yield _PathContext(self._api, self._path + path)
-
-    def add_resource(self, resource, *urls, **kwargs):
-        if not urls:
-            urls = ['']
-        urls = [(self._path + u) for u in urls]
-        return self._api.add_resource(resource, *urls, **kwargs)
