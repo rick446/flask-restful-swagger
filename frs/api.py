@@ -17,6 +17,10 @@ from .validators import DefaultValidatingDraft4Validator
 log = logging.getLogger(__name__)
 
 
+def mount_api(spec_url):
+    pass
+
+
 class SwaggerApi(Api):
     TRUTHY = ('true', 't', 'yes', 'y', 'on', '1')
     FALSY = ('false', 'f', 'no', 'n', 'off', '0')
@@ -25,6 +29,11 @@ class SwaggerApi(Api):
         self._config_prefix = kwargs.pop(
             'config_prefix', 'FRS')
         self._loader = YamlLoader()
+        self._spec_url = None
+        self._resource_module = None
+        self.validate_responses = None
+        self._resource_paths = {}
+        self._spec = {}
         super(SwaggerApi, self).__init__(*args, **kwargs)
 
     def init_app(self, app, *args, **kwargs):
@@ -39,11 +48,11 @@ class SwaggerApi(Api):
             '{}_RESOURCE_MODULE'.format(self._config_prefix), None)
         self.validate_responses = self._asbool(app.config.get(
             '{}_VALIDATE_RESPONSES'.format(self._config_prefix), True))
-        self.spec = self._loader.get_remote_json(self._spec_url)
-        self._spec = JsonRef.replace_refs(
-            self.spec, base_uri=self._spec_url, loader=self._loader)
-        self._process_spec(self._spec)
-        app.extensions['frs'] = self
+        spec = self._loader.get_remote_json(self._spec_url)
+        spec = JsonRef.replace_refs(
+            spec, base_uri=self._spec_url, loader=self._loader)
+        self._process_spec(spec)
+        self._spec = spec
 
         super(SwaggerApi, self)._init_app(app)
 
@@ -77,9 +86,8 @@ class SwaggerApi(Api):
 
     def _process_spec(self, spec):
         # Catalog the resources handling each path
-        self._resource_paths = {}
         if self._resource_module:
-            prefix = self._resource_module + '.'
+            prefix = self._resource_module
         for path, pspec in spec['paths'].items():
             res = pspec.get('x-resource')
             if res:
@@ -179,7 +187,7 @@ class SwaggerApi(Api):
             p_name = param['name']
             p_type = param['type']
             p_format = param.get('format', None)
-            if param['required']:
+            if param.get('required', False):
                 schema_spec['required'].append(p_name)
             schema_spec['properties'][p_name] = p_sch = dict(type=p_type)
             if p_format:
@@ -226,6 +234,15 @@ class SwaggerApi(Api):
             return False
         else:
             return value
+
+
+def _deepmerge(dst, src):
+    for k, v in src.items():
+        if isinstance(v, dict):
+            node = dst.setdefault(k, {})
+            _deepmerge(node, v)
+        else:
+            dst[k] = v
 
 
 class _PathContext(object):
