@@ -29,6 +29,8 @@ class SwaggerApi(Api):
     FALSY = ('false', 'f', 'no', 'n', 'off', '0')
 
     def __init__(self, spec, *args, **kwargs):
+        self._Validator = kwargs.pop(
+            'validator', DefaultValidatingDraft4Validator)
         self._resource_paths = {}
         self._spec = spec
         self._resource_map = {}
@@ -41,7 +43,10 @@ class SwaggerApi(Api):
                 log.debug('Ignoring un-resourced path %s', path)
                 continue
             resource_class = self._load_resource(resource_path)
-            self.add_resource(resource_class, path)
+            urls = [path]
+            if path.endswith('/') and not self.strict_trailing_slash:
+                urls.append(path[:-1])
+            self.add_resource(resource_class, *urls, pathspec=pspec)
         super(SwaggerApi, self)._init_app(app)
 
     def get_spec_json(self):
@@ -55,16 +60,16 @@ class SwaggerApi(Api):
         return self._spec.get('basePath', '')
 
     @property
+    def strict_trailing_slash(self):
+        return self._spec.get('x-strict-trailing_slash', False)
+
+    @property
     def resource_base(self):
         return self._spec.get('x-resource-base', None)
 
     @property
     def validate_responses(self):
         return self._spec.get('x-validate-responses', False)
-
-    @property
-    def extra_config(self):
-        return self._spec.get('x-extra', {})
 
     def validate_parameters(self, resource, request, args, kwargs):
         pathspec = self._get_pathspec(resource)
@@ -121,13 +126,14 @@ class SwaggerApi(Api):
         schema_spec = resp_spec.get('schema', None)
         if schema_spec is None:
             return
-        schema = DefaultValidatingDraft4Validator(schema_spec)
+        schema = self._Validator(schema_spec)
         json_data = json.loads(response.data)
         schema.validate(json_data)
 
     def add_resource(self, resource, *swagger_paths, **kwargs):
-        pathspec = self._spec['paths'][swagger_paths[0]]
-        self._resource_map[resource.resource_name()] = pathspec
+        pathspec = kwargs.pop('pathspec', None)
+        if pathspec:
+            self._resource_map[resource.resource_name()] = pathspec
         swagger_paths = [
             self._spec.get('basePath', '') + u for u in swagger_paths]
         urls = [flask_from_swagger(path) for path in swagger_paths]
@@ -222,12 +228,15 @@ class SwaggerApi(Api):
             elif p_type == 'string':
                 res[p_name] = six.text_type(value)
 
-        schema = DefaultValidatingDraft4Validator(schema_spec)
+        schema = self._Validator(schema_spec)
         schema.validate(res)
         return res
 
     def _check_body_param(self, param_spec, data):
-        schema = DefaultValidatingDraft4Validator(param_spec['schema'])
+        if 'schema' in param_spec:
+            schema = self._Validator(param_spec['schema'])
+        else:
+            schema = self._Validator(param_spec)
         schema.validate(data)
         return data
 
