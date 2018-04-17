@@ -50,10 +50,10 @@ def mount_api(app, blueprint, spec, config, config_prefix=None, **kwargs):
     return api
 
 
-def load_spec(spec_uri, base_uri=None):
+def load_spec(spec_uri, base_uri=None, password=None):
     if base_uri:
         spec_uri = urljoin(base_uri, spec_uri)
-    loader = YamlLoader()
+    loader = YamlLoader(password=password)
     spec = JsonRef({'$ref': spec_uri}, loader=loader)
     exp = TemplateExpander(spec_uri)
     spec = exp(spec)
@@ -68,9 +68,10 @@ class TemplateExpander(object):
     def __init__(self, base_uri):
         self.ctx = {
             'env': os.environ,
-            'load_spec': lambda uri: load_spec(uri, base_uri)
+            'load_spec': lambda uri, *args, **kwargs: load_spec(uri, base_uri, *args, **kwargs)
         }
         self.env = NativeEnvironment()
+        self.env.filters['eval'] = eval
 
     def __call__(self, node, seen=None):
         if seen is None:
