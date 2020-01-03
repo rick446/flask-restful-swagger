@@ -80,7 +80,10 @@ class SwaggerApi(Api):
         # Check the body param
         body_param_spec = [p for p in params_spec if p['in'] == 'body']
         if body_param_spec:
-            content_type = cgi.parse_header(request.content_type)[0]
+            if request.content_type:
+                content_type = cgi.parse_header(request.content_type)[0]
+            else:
+                content_type = None
             if content_type == 'application/json':
                 try:
                     data = request.json
@@ -89,7 +92,7 @@ class SwaggerApi(Api):
                         "Client said it sent JSON, but it didn't: %r",
                         request.data)
                     data = None
-            elif request.content_type in (
+            elif content_type in (
                     'application/x-www-form-urlencoded',
                     'multipart/form-data'):
                 data = request.form
